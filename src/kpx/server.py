@@ -235,7 +235,7 @@ async def entry(
     db: DatabaseManager = Depends(_get_db),
 ) -> dict[str, Any]:
     try:
-        detail = db.get_entry(uuid=uuid, db_path=db_path)
+        detail = db.get_entry(uuid_str=uuid, db_path=db_path)
         if detail is None:
             raise HTTPException(status_code=404, detail="Entry not found")
         return detail.model_dump() if hasattr(detail, "model_dump") else detail.__dict__

@@ -144,7 +144,9 @@ function createDropdown(entries) {
     `;
     item.addEventListener("mouseenter", () => item.style.background = "#313244");
     item.addEventListener("mouseleave", () => item.style.background = "none");
-    item.addEventListener("click", (e) => {
+    // Use mousedown to fire before the document click handler can close the dropdown
+    item.addEventListener("mousedown", (e) => {
+      e.preventDefault();
       e.stopPropagation();
       fillFromEntry(entry);
     });
@@ -191,20 +193,36 @@ function toggleDropdown() {
 }
 
 async function fillFromEntry(entry) {
+  // Close dropdown immediately so it doesn't interfere
+  if (kpxDropdown) { kpxDropdown.remove(); kpxDropdown = null; }
+
   try {
+    // Fetch full entry (need password — not in cached data)
     const resp = await chrome.runtime.sendMessage({
       action: "getEntry",
       data: { uuid: entry.uuid, db_path: entry.db_path },
     });
-    if (resp?.error) return;
-    const full = resp.result ?? resp;
+
+    let username = entry.username;
+    let password = "";
+
+    if (resp?.error) {
+      console.error("KPX getEntry error:", resp.error);
+      // Fall back: fill username only
+    } else {
+      const full = resp.result ?? resp;
+      username = full.username ?? entry.username;
+      password = full.password ?? "";
+    }
 
     const usernameField = findBestField(USERNAME_SELECTORS);
     const passwordField = findBestField(PASSWORD_SELECTORS);
-    if (usernameField) fillField(usernameField, full.username ?? entry.username);
-    if (passwordField) fillField(passwordField, full.password);
+    if (usernameField) fillField(usernameField, username);
+    if (passwordField && password) fillField(passwordField, password);
 
-    if (kpxDropdown) { kpxDropdown.remove(); kpxDropdown = null; }
+    if (!usernameField && !passwordField) {
+      console.warn("KPX: no username or password fields found on page");
+    }
   } catch (err) {
     console.error("KPX fill error:", err);
   }
