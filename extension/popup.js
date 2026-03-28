@@ -148,10 +148,15 @@ async function fillEntry(entry) {
   try {
     // Fetch full entry to get password
     const full = await send("getEntry", { uuid: entry.uuid, db_path: entry.db_path });
-    await send("fillCredentials", {
-      username: full.username ?? entry.username,
-      password: full.password,
-    });
+    // Send fill directly to content script via tabs API (avoids popup close race)
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.tabs.sendMessage(tab.id, {
+        action: "fillCredentials",
+        username: full.username ?? entry.username,
+        password: full.password,
+      });
+    }
     window.close();
   } catch (err) {
     console.error("Fill failed:", err);

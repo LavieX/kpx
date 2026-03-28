@@ -8,7 +8,7 @@
   },
   "version": "1.0.0",
   "description": "Credential bridge for KeePass via KPX server. No native messaging required.",
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "tabs"],
   "host_permissions": ["http://127.0.0.1:19455/*"],
   "background": {
     "scripts": ["background.js"]
