@@ -54,8 +54,18 @@ function startHealthPolling() {
 
 async function handleGetStatus() {
   const online = await checkHealth();
+  if (!online) return { online, paired: false };
   const token = await getToken();
-  return { online, paired: online && !!token };
+  if (!token) return { online, paired: false };
+  // Actually validate the token against the server
+  try {
+    await apiFetch("/databases");
+    return { online, paired: true };
+  } catch {
+    // Token is invalid/expired — clear it so we show pairing screen
+    await chrome.storage.local.remove("kpxToken");
+    return { online, paired: false };
+  }
 }
 
 async function handlePair(data) {
