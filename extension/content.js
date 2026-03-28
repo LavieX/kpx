@@ -236,8 +236,13 @@ document.addEventListener("click", () => {
 // --- Auto-detect login fields and show badge ---
 
 async function checkForLoginFields() {
+  // Look for either a username or password field — password-only pages (e.g. Amazon step 2)
   const usernameField = findBestField(USERNAME_SELECTORS);
-  if (!usernameField || !isVisible(usernameField)) return;
+  const passwordField = findBestField(PASSWORD_SELECTORS);
+  const targetField = (usernameField && isVisible(usernameField)) ? usernameField
+    : (passwordField && isVisible(passwordField)) ? passwordField
+    : null;
+  if (!targetField) return;
 
   // Ask background for autofill match
   try {
@@ -256,14 +261,14 @@ async function checkForLoginFields() {
 
     cachedMatches = entries;
 
-    // Show badge on the username field
+    // Show badge on whichever field we found
     if (kpxBadge) kpxBadge.remove();
     kpxBadge = createBadge();
     document.body.appendChild(kpxBadge);
-    positionBadge(usernameField);
+    positionBadge(targetField);
 
     // Reposition on scroll/resize
-    const reposition = () => { if (kpxBadge) positionBadge(usernameField); };
+    const reposition = () => { if (kpxBadge) positionBadge(targetField); };
     window.addEventListener("scroll", reposition, { passive: true });
     window.addEventListener("resize", reposition, { passive: true });
   } catch {
