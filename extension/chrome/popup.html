@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <div class="title-row">
+        <span class="logo">KPX</span>
+        <span id="status-dot" class="dot red"></span>
+      </div>
+    </header>
+
+    <!-- Disconnected state -->
+    <section id="view-disconnected" class="view">
+      <p class="message">Server not running</p>
+      <p class="hint">Start the server with <code>kpx serve</code></p>
+      <button id="btn-retry">Retry Connection</button>
+    </section>
+
+    <!-- Pairing state -->
+    <section id="view-pair" class="view hidden">
+      <p class="message">Not paired</p>
+      <p class="hint">A pairing code is displayed on the server console.</p>
+      <div class="pair-row">
+        <input id="pair-code" type="text" maxlength="6" placeholder="Pairing code" autocomplete="off">
+        <button id="btn-pair">Pair</button>
+      </div>
+      <button id="btn-init-pair" class="link-btn">Request new code</button>
+      <p id="pair-error" class="error hidden"></p>
+    </section>
+
+    <!-- Connected state -->
+    <section id="view-connected" class="view hidden">
+      <div id="autofill-section">
+        <p class="section-label">Matches for this page</p>
+        <div id="autofill-list" class="entry-list"></div>
+        <p id="no-matches" class="hint hidden">No matching credentials found.</p>
+      </div>
+
+      <div id="search-section">
+        <div class="search-row">
+          <input id="search-input" type="text" placeholder="Search entries..." autocomplete="off">
+        </div>
+        <div id="search-results" class="entry-list"></div>
+      </div>
+    </section>
+
+    <footer id="footer" class="hidden">
+      <span id="db-count"></span>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
