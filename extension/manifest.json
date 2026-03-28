@@ -1,6 +1,11 @@
 {
   "manifest_version": 3,
   "name": "KPX — KeePass Bridge",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "kpx@kpx.local"
+    }
+  },
   "version": "1.0.0",
   "description": "Credential bridge for KeePass via KPX server. No native messaging required.",
   "permissions": ["activeTab", "storage"],

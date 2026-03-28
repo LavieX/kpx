@@ -25,7 +25,7 @@ app = FastAPI(title="KPX", version=__version__)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^chrome-extension://.*$",
+    allow_origin_regex=r"^(chrome|moz)-extension://.*$",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,7 +49,7 @@ class LockRequest(BaseModel):
 # Origin validation middleware
 # ---------------------------------------------------------------------------
 
-_ALLOWED_ORIGIN_PATTERN = re.compile(r"^chrome-extension://")
+_ALLOWED_ORIGIN_PATTERN = re.compile(r"^(chrome|moz)-extension://")
 
 
 @app.middleware("http")
