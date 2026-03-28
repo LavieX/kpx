@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import secrets
+import string
+from contextlib import asynccontextmanager
 from typing import Any
 
 import click
@@ -21,7 +25,27 @@ from kpx.models import UnlockRequest
 # App setup
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="KPX", version=__version__)
+@asynccontextmanager
+async def _lifespan(application: FastAPI):
+    """Run a background idle-checker every 60 seconds."""
+    async def _idle_checker():
+        db = DatabaseManager()
+        while True:
+            await asyncio.sleep(60)
+            locked = db.check_idle()
+            if locked:
+                click.echo(f"Auto-locked {locked} database(s) due to inactivity.")
+
+    task = asyncio.create_task(_idle_checker())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+app = FastAPI(title="KPX", version=__version__, lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +67,10 @@ class PairRequest(BaseModel):
 class LockRequest(BaseModel):
     db_path: str | None = None
     all: bool = False
+
+
+class ConfigRequest(BaseModel):
+    auto_lock_minutes: float
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +113,8 @@ async def require_auth(authorization: str | None = Header(default=None)) -> str:
     auth = _get_auth()
     if not auth.validate_token(token):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+    # Update activity timestamp on every authenticated request
+    _get_db().touch()
     return token
 
 
@@ -230,6 +260,75 @@ async def autofill(
         raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Config endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/config")
+async def get_config(
+    _token: str = Depends(require_auth),
+    db: DatabaseManager = Depends(_get_db),
+) -> dict[str, Any]:
+    timeout_seconds = db.get_auto_lock_timeout()
+    return {
+        "auto_lock_minutes": timeout_seconds / 60,
+        "auto_lock_enabled": timeout_seconds > 0,
+    }
+
+
+@app.post("/config")
+async def set_config(
+    body: ConfigRequest,
+    _token: str = Depends(require_auth),
+    db: DatabaseManager = Depends(_get_db),
+) -> dict[str, Any]:
+    if body.auto_lock_minutes < 0:
+        raise HTTPException(status_code=400, detail="auto_lock_minutes must be >= 0")
+    db.set_auto_lock_timeout(body.auto_lock_minutes)
+    return {
+        "auto_lock_minutes": body.auto_lock_minutes,
+        "auto_lock_enabled": body.auto_lock_minutes > 0,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Password generator (no auth required)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/generate")
+async def generate_password(
+    length: int = Query(default=20, ge=1, le=256),
+    symbols: bool = Query(default=True),
+    numbers: bool = Query(default=True),
+    uppercase: bool = Query(default=True),
+    lowercase: bool = Query(default=True),
+    count: int = Query(default=1, ge=1, le=100),
+) -> dict[str, Any]:
+    alphabet = ""
+    if lowercase:
+        alphabet += string.ascii_lowercase
+    if uppercase:
+        alphabet += string.ascii_uppercase
+    if numbers:
+        alphabet += string.digits
+    if symbols:
+        alphabet += string.punctuation
+    if not alphabet:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one character class must be enabled",
+        )
+    passwords = [
+        "".join(secrets.choice(alphabet) for _ in range(length))
+        for _ in range(count)
+    ]
+    if count == 1:
+        return {"password": passwords[0]}
+    return {"passwords": passwords}
 
 
 # ---------------------------------------------------------------------------

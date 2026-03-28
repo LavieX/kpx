@@ -334,6 +334,89 @@ def _copy_to_clipboard(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--auto-lock", "auto_lock", type=float, default=None,
+              help="Set auto-lock timeout in minutes (0 to disable).")
+def config(auto_lock: Optional[float]):
+    """Show or change KPX configuration."""
+    _ensure_server()
+    if auto_lock is not None:
+        if auto_lock < 0:
+            raise click.ClickException("auto-lock minutes must be >= 0")
+        result = _request("POST", "/config", body={"auto_lock_minutes": auto_lock})
+        if auto_lock == 0:
+            click.echo(click.style("Auto-lock disabled.", fg="yellow"))
+        else:
+            click.echo(click.style(f"Auto-lock set to {auto_lock} minutes.", fg="green"))
+    else:
+        result = _request("GET", "/config")
+        minutes = result.get("auto_lock_minutes", "?")
+        enabled = result.get("auto_lock_enabled", False)
+        click.echo("KPX Configuration:")
+        if enabled:
+            click.echo(f"  Auto-lock timeout: {minutes} minutes")
+        else:
+            click.echo("  Auto-lock timeout: disabled")
+
+
+# ---------------------------------------------------------------------------
+# generate
+# ---------------------------------------------------------------------------
+
+@cli.command()
+@click.option("--length", default=20, type=int, help="Password length (default 20).")
+@click.option("--no-symbols", is_flag=True, help="Exclude symbols.")
+@click.option("--no-numbers", is_flag=True, help="Exclude numbers.")
+@click.option("--no-uppercase", is_flag=True, help="Exclude uppercase letters.")
+@click.option("--no-lowercase", is_flag=True, help="Exclude lowercase letters.")
+@click.option("--count", default=1, type=int, help="Generate multiple passwords.")
+@click.option("--show", is_flag=True, help="Print password instead of copying to clipboard.")
+def generate(length: int, no_symbols: bool, no_numbers: bool,
+             no_uppercase: bool, no_lowercase: bool, count: int, show: bool):
+    """Generate a cryptographically secure password."""
+    import secrets
+    import string
+
+    alphabet = ""
+    if not no_lowercase:
+        alphabet += string.ascii_lowercase
+    if not no_uppercase:
+        alphabet += string.ascii_uppercase
+    if not no_numbers:
+        alphabet += string.digits
+    if not no_symbols:
+        alphabet += string.punctuation
+    if not alphabet:
+        raise click.ClickException("At least one character class must be enabled.")
+
+    passwords = [
+        "".join(secrets.choice(alphabet) for _ in range(length))
+        for _ in range(count)
+    ]
+
+    if count == 1:
+        pw = passwords[0]
+        if show:
+            click.echo(pw)
+        else:
+            if _copy_to_clipboard(pw):
+                click.echo(click.style("Password copied to clipboard.", fg="green"))
+            else:
+                click.echo(click.style("Clipboard not available. Password:", fg="yellow"))
+                click.echo(pw)
+    else:
+        for i, pw in enumerate(passwords, 1):
+            click.echo(f"  {i}. {pw}")
+        if not show:
+            # Copy the first one to clipboard
+            if _copy_to_clipboard(passwords[0]):
+                click.echo(click.style("\nFirst password copied to clipboard.", fg="green"))
+
+
+# ---------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------
 

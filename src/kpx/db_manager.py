@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -24,6 +25,8 @@ class DatabaseManager:
                 inst = super().__new__(cls)
                 inst._registry: Dict[str, PyKeePass] = {}
                 inst._lock = threading.Lock()
+                inst._last_activity: float = time.time()
+                inst._auto_lock_timeout: float = 15 * 60  # 15 minutes default
                 cls._instance = inst
             return cls._instance
 
@@ -58,6 +61,39 @@ class DatabaseManager:
             count = len(self._registry)
             self._registry.clear()
             return count
+
+    # ------------------------------------------------------------------
+    # Idle / session management
+    # ------------------------------------------------------------------
+
+    def touch(self) -> None:
+        """Update last_activity timestamp."""
+        with self._lock:
+            self._last_activity = time.time()
+
+    def check_idle(self) -> int:
+        """Lock all databases if idle timeout exceeded. Returns count locked, 0 if not idle."""
+        with self._lock:
+            if self._auto_lock_timeout <= 0:
+                return 0
+            if not self._registry:
+                return 0
+            elapsed = time.time() - self._last_activity
+            if elapsed < self._auto_lock_timeout:
+                return 0
+            count = len(self._registry)
+            self._registry.clear()
+        return count
+
+    def get_auto_lock_timeout(self) -> float:
+        """Return the auto-lock timeout in seconds."""
+        with self._lock:
+            return self._auto_lock_timeout
+
+    def set_auto_lock_timeout(self, minutes: float) -> None:
+        """Set the auto-lock timeout. 0 disables auto-lock."""
+        with self._lock:
+            self._auto_lock_timeout = minutes * 60
 
     # ------------------------------------------------------------------
     # Queries
