@@ -434,3 +434,14 @@ def serve(daemon: bool, host: str, port: int):
     # Foreground
     from kpx.server import run_server
     run_server(host=host, port=port)
+
+
+# ---------------------------------------------------------------------------
+# tray
+# ---------------------------------------------------------------------------
+
+@cli.command()
+def tray():
+    """Launch the KPX system tray application."""
+    from kpx.tray import main as tray_main
+    tray_main()
