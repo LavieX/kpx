@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import secrets
 import string
+import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -20,6 +23,49 @@ from kpx import __version__
 from kpx.auth import AuthManager
 from kpx.db_manager import DatabaseManager
 from kpx.models import UnlockRequest
+
+
+# ---------------------------------------------------------------------------
+# Rate limiter (in-memory, per-endpoint)
+# ---------------------------------------------------------------------------
+
+class _RateLimiter:
+    """Simple sliding-window rate limiter keyed by (client_ip, endpoint)."""
+
+    def __init__(self) -> None:
+        self._hits: dict[str, list[float]] = defaultdict(list)
+
+    def is_limited(self, key: str, max_requests: int, window_seconds: int) -> bool:
+        now = time.monotonic()
+        hits = self._hits[key]
+        # Prune expired entries
+        self._hits[key] = [t for t in hits if now - t < window_seconds]
+        if len(self._hits[key]) >= max_requests:
+            return True
+        self._hits[key].append(now)
+        return False
+
+
+_rate_limiter = _RateLimiter()
+
+
+# ---------------------------------------------------------------------------
+# Uvicorn log filter — scrub sensitive endpoint paths
+# ---------------------------------------------------------------------------
+
+_SENSITIVE_PATH_RE = re.compile(r"(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD)\s+(/entry/|/autofill)")
+
+
+class _SensitivePathFilter(logging.Filter):
+    """Redact query parameters from uvicorn access logs for sensitive endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if _SENSITIVE_PATH_RE.search(msg):
+            # Replace everything after the path's '?' with '[REDACTED]'
+            record.msg = re.sub(r"(\S+\s+/(?:entry/[^\s?]*|autofill))\?[^\s\"]*", r"\1?[REDACTED]", record.msg)
+            record.args = ()
+        return True
 
 # ---------------------------------------------------------------------------
 # App setup
@@ -74,21 +120,68 @@ class ConfigRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Origin validation middleware
+# Security middleware
 # ---------------------------------------------------------------------------
 
+_ALLOWED_HOSTS = frozenset({
+    "127.0.0.1:19455",
+    "localhost:19455",
+    "127.0.0.1",
+    "localhost",
+})
+
 _ALLOWED_ORIGIN_PATTERN = re.compile(r"^(chrome|moz)-extension://")
+
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Append hardening headers to every response."""
+    response = await call_next(request)
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers[name] = value
+    return response
+
+
+@app.middleware("http")
+async def validate_host(request: Request, call_next):
+    """DNS rebinding protection — reject requests with unexpected Host headers."""
+    host = request.headers.get("host", "")
+    if host not in _ALLOWED_HOSTS:
+        return JSONResponse(
+            status_code=403,
+            content={"error": "Invalid Host header"},
+        )
+    return await call_next(request)
 
 
 @app.middleware("http")
 async def validate_origin(request: Request, call_next):
+    """Origin / Referer validation for browser requests."""
     origin = request.headers.get("origin")
-    # Allow requests with no Origin (e.g. direct localhost curl, CLI tools)
-    if origin is not None and not _ALLOWED_ORIGIN_PATTERN.match(origin):
+    referer = request.headers.get("referer")
+
+    if origin is not None:
+        # Origin present — must be a browser extension
+        if not _ALLOWED_ORIGIN_PATTERN.match(origin):
+            return JSONResponse(
+                status_code=403,
+                content={"error": "Forbidden origin"},
+            )
+    elif referer is not None:
+        # Referer present without Origin — browsers always send Origin with
+        # CORS requests, so this is suspicious (possible spoofing).
         return JSONResponse(
             status_code=403,
-            content={"error": "Forbidden origin"},
+            content={"error": "Referer without Origin is not allowed"},
         )
+
     return await call_next(request)
 
 
@@ -164,10 +257,14 @@ async def pair(
 
 @app.post("/unlock")
 async def unlock(
+    request: Request,
     body: UnlockRequest,
     _token: str = Depends(require_auth),
     db: DatabaseManager = Depends(_get_db),
 ) -> dict[str, Any]:
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limiter.is_limited(f"unlock:{client_ip}", max_requests=5, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Too many unlock attempts. Try again later.")
     try:
         info = db.unlock(
             db_path=body.db_path,
@@ -229,11 +326,15 @@ async def search(
 
 @app.get("/entry/{uuid}")
 async def entry(
+    request: Request,
     uuid: str,
     db_path: str = Query(..., alias="db"),
     _token: str = Depends(require_auth),
     db: DatabaseManager = Depends(_get_db),
 ) -> dict[str, Any]:
+    client_ip = request.client.host if request.client else "unknown"
+    if _rate_limiter.is_limited(f"entry:{client_ip}", max_requests=60, window_seconds=60):
+        raise HTTPException(status_code=429, detail="Rate limit exceeded. Try again later.")
     try:
         detail = db.get_entry(uuid_str=uuid, db_path=db_path)
         if detail is None:
@@ -338,6 +439,8 @@ async def generate_password(
 
 def run_server(host: str = "127.0.0.1", port: int = 19455) -> None:
     """Start the KPX server. Called by ``kpx serve``."""
+    # Install log filter to scrub sensitive query parameters
+    logging.getLogger("uvicorn.access").addFilter(_SensitivePathFilter())
     click.echo(f"KPX server starting on http://{host}:{port}")
     click.echo("Press Ctrl+C to stop.")
     uvicorn.run(
